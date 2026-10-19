@@ -1,0 +1,22 @@
+{
+  "name": "securedevops",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SecureDevOps — GitHub Dependency Vulnerability Scanner",
+  "scripts": {
+    "dev:backend": "cd backend && npm run start:dev",
+    "build:backend": "cd backend && npm run build",
+    "test:backend": "cd backend && npm test",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "keywords": [
+    "security",
+    "vulnerability-scanner",
+    "osv",
+    "devops",
+    "github-webhooks"
+  ],
+  "author": "SecureDevOps Team",
+  "license": "MIT"
+}
