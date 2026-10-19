@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { GitHubService } from '../github/github.service';
-import { ScannerService } from '../scanner/scanner.service';
+import { ScannerService, FileScanResult } from '../scanner/scanner.service';
 
 interface RequestWithRawBody extends Request {
   rawBody?: Buffer;
@@ -60,7 +60,6 @@ export class WebhookController {
       }
       this.processedDeliveries.add(deliveryId);
 
-      // Keep cache bounded
       if (this.processedDeliveries.size > 5000) {
         const first = this.processedDeliveries.values().next().value;
         if (first) this.processedDeliveries.delete(first);
@@ -94,53 +93,49 @@ export class WebhookController {
       }
 
       this.logger.log(
-        `Processing push event for ${repoFullName} at commit ${commitSha.substring(0, 7)} (ref: ${ref}). Fetching dependency files...`,
+        `Processing push event for ${repoFullName} at commit ${commitSha.substring(0, 7)} (ref: ${ref}).`,
       );
 
-      // 5. Fetch package.json and package-lock.json from GitHub
-      const [packageJsonContent, packageLockContent] = await Promise.all([
-        this.githubService.getFileContent(owner, repoName, 'package.json', commitSha, installationId),
-        this.githubService.getFileContent(owner, repoName, 'package-lock.json', commitSha, installationId),
-      ]);
+      // Find dependency files (root or common subfolders for monorepos)
+      const targetPaths = ['', 'backend', 'frontend', 'server', 'client', 'app'];
+      const scanResults: Array<{ path: string; result: FileScanResult }> = [];
 
-      if (!packageJsonContent) {
-        this.logger.log(`No package.json found in ${repoFullName} at commit ${commitSha}`);
+      for (const p of targetPaths) {
+        const pkgFilePath = p ? `${p}/package.json` : 'package.json';
+        const lockFilePath = p ? `${p}/package-lock.json` : 'package-lock.json';
+
+        const [packageJsonContent, packageLockContent] = await Promise.all([
+          this.githubService.getFileContent(owner, repoName, pkgFilePath, commitSha, installationId),
+          this.githubService.getFileContent(owner, repoName, lockFilePath, commitSha, installationId),
+        ]);
+
+        if (packageJsonContent && packageLockContent) {
+          this.logger.log(`Found dependency files at '${pkgFilePath}'. Scanning with OSV...`);
+          const result = await this.scannerService.analyzeAndScan(packageJsonContent, packageLockContent);
+          scanResults.push({
+            path: p || 'root',
+            result,
+          });
+        }
+      }
+
+      if (scanResults.length === 0) {
+        this.logger.warn(`No valid package.json & package-lock.json pair found in ${repoFullName} at commit ${commitSha}`);
         return {
           status: 'skipped',
           repository: repoFullName,
           commitSha,
-          message: 'No package.json file found in repository root.',
+          message: 'No package.json and package-lock.json files found to scan.',
         };
       }
-
-      if (!packageLockContent) {
-        this.logger.warn(`package.json found in ${repoFullName}, but package-lock.json is missing.`);
-        return {
-          status: 'warning',
-          repository: repoFullName,
-          commitSha,
-          message:
-            'Exact dependency resolution is unavailable because package-lock.json is missing from this commit.',
-        };
-      }
-
-      // 6. Scan extracted dependencies against OSV
-      this.logger.log(`Parsing dependency files for ${repoFullName} and querying OSV...`);
-      const scanResult = await this.scannerService.analyzeAndScan(
-        packageJsonContent,
-        packageLockContent,
-      );
-
-      this.logger.log(
-        `Scan complete for ${repoFullName}: ${scanResult.metrics.totalDependencies} dependencies scanned, ${scanResult.metrics.vulnerableDependencies} vulnerable, ${scanResult.metrics.totalFindings} findings.`,
-      );
 
       return {
         status: 'completed',
         repository: repoFullName,
         commitSha,
         ref,
-        scanResult,
+        scannedProjectsCount: scanResults.length,
+        scans: scanResults,
       };
     }
 
@@ -156,34 +151,59 @@ export class WebhookController {
    */
   @Post('test-fetch')
   async testFetch(
-    @Body() body: { owner: string; repo: string; ref?: string; installationId?: number },
+    @Body()
+    body: {
+      owner: string;
+      repo: string;
+      ref?: string;
+      path?: string;
+      installationId?: number;
+    },
   ) {
     if (!body?.owner || !body?.repo) {
       throw new BadRequestException('owner and repo parameters are required.');
     }
 
-    const [packageJson, packageLock] = await Promise.all([
-      this.githubService.getFileContent(body.owner, body.repo, 'package.json', body.ref, body.installationId),
-      this.githubService.getFileContent(body.owner, body.repo, 'package-lock.json', body.ref, body.installationId),
-    ]);
+    const ref = body.ref || 'main';
+    const subpaths = body.path !== undefined ? [body.path] : ['', 'backend', 'frontend', 'server', 'client'];
+    const results: Array<{
+      scannedPath: string;
+      filesFound: { packageJson: boolean; packageLock: boolean };
+      scanResult: FileScanResult | null;
+    }> = [];
 
-    const hasPkg = Boolean(packageJson);
-    const hasLock = Boolean(packageLock);
+    for (const sub of subpaths) {
+      const cleanSub = sub.replace(/^\/+|\/+$/g, '');
+      const pkgPath = cleanSub ? `${cleanSub}/package.json` : 'package.json';
+      const lockPath = cleanSub ? `${cleanSub}/package-lock.json` : 'package-lock.json';
 
-    let scanResult = null;
-    if (hasPkg && hasLock) {
-      scanResult = await this.scannerService.analyzeAndScan(packageJson, packageLock);
+      const [packageJson, packageLock] = await Promise.all([
+        this.githubService.getFileContent(body.owner, body.repo, pkgPath, ref, body.installationId),
+        this.githubService.getFileContent(body.owner, body.repo, lockPath, ref, body.installationId),
+      ]);
+
+      const hasPkg = Boolean(packageJson);
+      const hasLock = Boolean(packageLock);
+
+      if (hasPkg || hasLock || body.path !== undefined) {
+        let scanResult: FileScanResult | null = null;
+        if (hasPkg && hasLock) {
+          scanResult = await this.scannerService.analyzeAndScan(packageJson, packageLock);
+        }
+
+        results.push({
+          scannedPath: cleanSub || 'root',
+          filesFound: { packageJson: hasPkg, packageLock: hasLock },
+          scanResult,
+        });
+      }
     }
 
     return {
       repository: `${body.owner}/${body.repo}`,
-      ref: body.ref || 'default branch',
-      filesFound: {
-        packageJson: hasPkg,
-        packageLock: hasLock,
-      },
-      packageJsonSnippet: packageJson ? packageJson.slice(0, 300) + '...' : null,
-      scanResult,
+      ref,
+      projectsFound: results.length,
+      projects: results,
     };
   }
 }

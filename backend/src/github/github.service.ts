@@ -92,6 +92,32 @@ export class GitHubService {
   }
 
   /**
+   * Automatically resolves the installation ID for an account if not provided.
+   */
+  public async getInstallationIdForRepo(owner: string): Promise<number | null> {
+    if (!this.appId || !this.privateKey) return null;
+    try {
+      const jwt = this.generateAppJwt();
+      const response = await this.httpClient.get<Array<{ id: number; account: { login: string } }>>(
+        '/app/installations',
+        {
+          headers: {
+            Authorization: `Bearer ${jwt}`,
+            Accept: 'application/vnd.github+json',
+          },
+        },
+      );
+      const matching = response.data.find(
+        (inst) => inst.account?.login?.toLowerCase() === owner.toLowerCase(),
+      );
+      return matching ? matching.id : null;
+    } catch (err) {
+      this.logger.warn(`Could not auto-resolve installation for ${owner}: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
    * Fetches the content of a file from a repository at a specific commit or branch.
    * Returns raw string content, or null if the file is not found (HTTP 404).
    */
@@ -106,9 +132,18 @@ export class GitHubService {
       Accept: 'application/vnd.github.raw+json',
     };
 
-    if (installationId) {
-      const token = await this.getInstallationAccessToken(installationId);
-      headers.Authorization = `Bearer ${token}`;
+    let targetInstallationId = installationId;
+    if (!targetInstallationId) {
+      targetInstallationId = (await this.getInstallationIdForRepo(owner)) || undefined;
+    }
+
+    if (targetInstallationId) {
+      try {
+        const token = await this.getInstallationAccessToken(targetInstallationId);
+        headers.Authorization = `Bearer ${token}`;
+      } catch (tokenErr) {
+        this.logger.warn(`Failed to obtain installation token for ${owner}/${repo}: ${(tokenErr as Error).message}`);
+      }
     }
 
     const params: Record<string, string> = {};
@@ -131,8 +166,29 @@ export class GitHubService {
       }
       return JSON.stringify(response.data);
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        return null;
+      if (axios.isAxiosError(error)) {
+        if (error.response?.status === 404) {
+          return null;
+        }
+
+        // If rate limited (403), fallback to raw.githubusercontent.com for public files
+        if (error.response?.status === 403) {
+          this.logger.warn(`GitHub REST API returned 403 (rate limit). Falling back to raw.githubusercontent.com for ${filePath}...`);
+          try {
+            const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref || 'main')}/${filePath}`;
+            const rawRes = await axios.get<string>(rawUrl, {
+              headers: { 'User-Agent': 'SecureDevOps-Scanner/1.0' },
+              responseType: 'text',
+            });
+            return rawRes.data;
+          } catch (rawErr) {
+            if (axios.isAxiosError(rawErr) && rawErr.response?.status === 404) {
+              return null;
+            }
+            this.logger.warn(`Fallback fetch failed for ${filePath}: ${(rawErr as Error).message}`);
+            return null;
+          }
+        }
       }
       throw error;
     }

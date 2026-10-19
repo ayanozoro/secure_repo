@@ -1,0 +1,160 @@
+{
+  "info": {
+    "name": "SecureDevOps API",
+    "description": "Postman collection for testing SecureDevOps Scanner and GitHub Webhooks",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:4000/api/health",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "health"]
+        }
+      }
+    },
+    {
+      "name": "2. Scanner Status & Cache",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:4000/api/scanner/status",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "scanner", "status"]
+        }
+      }
+    },
+    {
+      "name": "3. Query Single Package (lodash 4.17.15)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:4000/api/scanner/query?name=lodash&version=4.17.15",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "scanner", "query"],
+          "query": [
+            { "key": "name", "value": "lodash" },
+            { "key": "version", "value": "4.17.15" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "4. Batch Scan Dependencies",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"dependencies\": [\n    { \"name\": \"lodash\", \"version\": \"4.17.15\", \"dependencyType\": \"direct\", \"isDev\": false },\n    { \"name\": \"minimist\", \"version\": \"1.2.0\", \"dependencyType\": \"transitive\", \"isDev\": false },\n    { \"name\": \"qs\", \"version\": \"6.5.2\", \"dependencyType\": \"direct\", \"isDev\": false },\n    { \"name\": \"react\", \"version\": \"18.2.0\", \"dependencyType\": \"direct\", \"isDev\": false },\n    { \"name\": \"typescript\", \"version\": \"5.3.3\", \"dependencyType\": \"direct\", \"isDev\": true }\n  ]\n}"
+        },
+        "url": {
+          "raw": "http://localhost:4000/api/scanner/scan",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "scanner", "scan"]
+        }
+      }
+    },
+    {
+      "name": "5. Test Fetch Repo Files from GitHub",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"owner\": \"lodash\",\n  \"repo\": \"lodash\",\n  \"ref\": \"4.17.15\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:4000/api/webhooks/test-fetch",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "webhooks", "test-fetch"]
+        }
+      }
+    },
+    {
+      "name": "6. Analyze & Scan Raw package.json + lockfile",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"packageJson\": \"{\\\"name\\\": \\\"demo\\\", \\\"dependencies\\\": {\\\"lodash\\\": \\\"4.17.15\\\"}}\",\n  \"packageLock\": \"{\\\"lockfileVersion\\\": 3, \\\"packages\\\": {\\\"\\\": {\\\"dependencies\\\": {\\\"lodash\\\": \\\"4.17.15\\\"}}, \\\"node_modules/lodash\\\": {\\\"version\\\": \\\"4.17.15\\\"}}}\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:4000/api/scanner/analyze",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "scanner", "analyze"]
+        }
+      }
+    },
+    {
+      "name": "7. Scan Project Self Dependencies",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:4000/api/scanner/self-test",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "scanner", "self-test"]
+        }
+      }
+    },
+    {
+      "name": "8. Simulate GitHub Push Webhook Event (Auto-Signed)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const secret = 'dghdfhsdfjsfgjsfgjf';",
+              "const payload = pm.request.body.raw || '';",
+              "const signature = 'sha256=' + CryptoJS.HmacSHA256(payload, secret).toString();",
+              "pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: signature });",
+              "pm.request.headers.upsert({ key: 'X-GitHub-Event', value: 'push' });",
+              "pm.request.headers.upsert({ key: 'X-GitHub-Delivery', value: 'postman-' + Date.now() });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-GitHub-Event", "value": "push" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"ref\": \"refs/heads/main\",\n  \"after\": \"4.17.15\",\n  \"repository\": {\n    \"name\": \"lodash\",\n    \"full_name\": \"lodash/lodash\",\n    \"owner\": { \"login\": \"lodash\" }\n  }\n}"
+        },
+        "url": {
+          "raw": "http://localhost:4000/api/webhooks/github",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "webhooks", "github"]
+        }
+      }
+    }
+  ]
+}
