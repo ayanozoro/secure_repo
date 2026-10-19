@@ -1,10 +1,19 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 import { OsvService } from './osv/osv.service';
+import { DependencyParserService } from './parser/dependency-parser.service';
+import { ScannerService, FileScanResult } from './scanner.service';
 import { BatchScanResult, PackageDependency } from './osv/osv.types';
+import { DependencyAnalysisResult } from './parser/dependency-parser.types';
 
 @Controller('scanner')
 export class ScannerController {
-  constructor(private readonly osvService: OsvService) {}
+  constructor(
+    private readonly osvService: OsvService,
+    private readonly parserService: DependencyParserService,
+    private readonly scannerService: ScannerService,
+  ) {}
 
   /**
    * Health / status endpoint for the scanner.
@@ -49,7 +58,7 @@ export class ScannerController {
   }
 
   /**
-   * Scans a list of dependencies sent in request body, or a default sample set if empty.
+   * Scans a raw list of dependencies sent in request body.
    * Example: POST /api/scanner/scan
    */
   @Post('scan')
@@ -70,5 +79,42 @@ export class ScannerController {
         : defaultSample;
 
     return this.osvService.scanDependencies(targetDependencies);
+  }
+
+  /**
+   * Stage 2: Parses package.json and package-lock.json without scanning.
+   * Example: POST /api/scanner/parse
+   */
+  @Post('parse')
+  parseFiles(
+    @Body() body: { packageJson?: string; packageLock?: string },
+  ): DependencyAnalysisResult {
+    return this.parserService.parseDependencies(body?.packageJson, body?.packageLock);
+  }
+
+  /**
+   * Stage 2: Parses package.json and package-lock.json AND scans dependencies against OSV.
+   * Example: POST /api/scanner/analyze
+   */
+  @Post('analyze')
+  async analyzeFiles(
+    @Body() body: { packageJson?: string; packageLock?: string },
+  ): Promise<FileScanResult> {
+    return this.scannerService.analyzeAndScan(body?.packageJson, body?.packageLock);
+  }
+
+  /**
+   * Stage 2: Self-test endpoint that reads and scans backend's own package.json & package-lock.json!
+   * Example: GET /api/scanner/self-test
+   */
+  @Get('self-test')
+  async scanSelf(): Promise<FileScanResult> {
+    const pkgPath = path.resolve(process.cwd(), 'package.json');
+    const lockPath = path.resolve(process.cwd(), 'package-lock.json');
+
+    const pkgContent = fs.existsSync(pkgPath) ? fs.readFileSync(pkgPath, 'utf8') : null;
+    const lockContent = fs.existsSync(lockPath) ? fs.readFileSync(lockPath, 'utf8') : null;
+
+    return this.scannerService.analyzeAndScan(pkgContent, lockContent);
   }
 }
