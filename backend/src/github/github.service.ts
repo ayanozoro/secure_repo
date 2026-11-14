@@ -198,7 +198,12 @@ export class GitHubService {
    * Verifies the GitHub webhook HMAC SHA-256 signature.
    */
   public verifyWebhookSignature(rawBody: Buffer | string, signatureHeader?: string): boolean {
-    if (!this.webhookSecret) {
+    const secret =
+      this.configService.get<string>('github.webhookSecret') ||
+      process.env.GITHUB_WEBHOOK_SECRET?.trim() ||
+      this.webhookSecret;
+
+    if (!secret) {
       this.logger.warn('GITHUB_WEBHOOK_SECRET is not configured. Webhook signature check will be skipped or fail.');
       return false;
     }
@@ -208,7 +213,7 @@ export class GitHubService {
     }
 
     const bodyBuffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody, 'utf8');
-    const hmac = crypto.createHmac('sha256', this.webhookSecret);
+    const hmac = crypto.createHmac('sha256', secret);
     hmac.update(bodyBuffer);
     const expectedSignature = `sha256=${hmac.digest('hex')}`;
 

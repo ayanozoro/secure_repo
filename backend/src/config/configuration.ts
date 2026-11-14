@@ -20,6 +20,7 @@ export interface AppConfig {
     clientId?: string;
     clientSecret?: string;
     webhookSecret?: string;
+    smeeUrl?: string;
   };
 }
 
@@ -72,5 +73,6 @@ export default (): AppConfig => ({
     clientId: process.env.GITHUB_CLIENT_ID?.trim(),
     clientSecret: process.env.GITHUB_CLIENT_SECRET?.trim(),
     webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim(),
+    smeeUrl: process.env.SMEE_URL?.trim(),
   },
 });

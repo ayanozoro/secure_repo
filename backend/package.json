@@ -10,6 +10,8 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
+    "smee": "npx smee-client --url https://smee.io/4Dskqsw7XjXJssg7 --target http://localhost:4000/api/webhooks/github",
+    "webhook:simulate": "node test-webhook-push.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
